@@ -2855,6 +2855,7 @@ function App() {
                   error: requestLogError,
                   filter: requestLogFilter,
                   loading: requestLogLoading,
+                  notify: showToast,
                   page: requestLogPage,
                   refreshLogs: () => void refreshRequestLogs(),
                   updateFilter: updateRequestLogFilter
@@ -2874,6 +2875,7 @@ function App() {
                   agentFilter: agentAnalysisAgent,
                   error: agentAnalysisError,
                   loading: agentAnalysisLoading,
+                  notify: showToast,
                   range: agentAnalysisRange,
                   refreshAnalysis: () => void refreshAgentAnalysis(),
                   selectedSession: agentAnalysisSession,

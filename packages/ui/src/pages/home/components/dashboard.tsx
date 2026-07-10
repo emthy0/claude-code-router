@@ -5,7 +5,7 @@ import {
   Card, CardContent, CardHeader, CardTitle, CartesianGrid, Cell, constrainOverviewWidgetSize,
   Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, cn, compactId,
   compactUserAgent, compareProviderAccountSnapshots, ComposedChart, CSS, DEFAULT_OVERVIEW_WIDGETS, DndContext,
-  Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle, Download,
   DragEndEvent, DragOverEvent, DragOverlay, DragStartEvent, Field, formatAxisNumber, formatBytes,
   formatCompactNumber, formatDuration, formatLogDateTime, formatPercent, formatProviderAccountDetailDate, formatProviderAccountMeterTitle, formatProviderAccountMeterValue,
   formatStatusBucketDate, formatStatusCodeCounts, formatSystemStatusRange, formatToolCounts, formatUsdCost, KeyboardSensor,
@@ -3185,6 +3185,7 @@ export function AgentAnalysisView({
   agentFilter,
   error,
   loading,
+  notify,
   range,
   refreshAnalysis,
   selectedSession,
@@ -3196,6 +3197,7 @@ export function AgentAnalysisView({
   agentFilter: AgentFilterValue;
   error: string;
   loading: boolean;
+  notify?: (message: string) => void;
   range: UsageStatsRange;
   refreshAnalysis: () => void;
   selectedSession?: AgentAnalysisSessionSelection;
@@ -3205,6 +3207,34 @@ export function AgentAnalysisView({
   snapshot: AgentAnalysisSnapshot;
 }) {
   const t = useAppText();
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+
+  async function exportSnapshot() {
+    if (exporting) {
+      return;
+    }
+    if (!window.ccr?.exportTextFile) {
+      setExportError(t("Export is only available in the Electron app."));
+      return;
+    }
+    setExporting(true);
+    setExportError("");
+    try {
+      const result = await window.ccr.exportTextFile({
+        content: JSON.stringify(snapshot, null, 2),
+        fileName: `claude-code-router-observability-${snapshot.range}.json`,
+        filters: [{ extensions: ["json"], name: "JSON" }]
+      });
+      if (!result.canceled && result.file) {
+        notify?.(`${t("Exported")}: ${result.file}`);
+      }
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <motion.div
@@ -3244,6 +3274,10 @@ export function AgentAnalysisView({
             </Button>
           ))}
         </div>
+        <Button aria-label={t("Export snapshot")} className="h-8 gap-1.5 px-2.5 text-[12px]" disabled={exporting} onClick={() => void exportSnapshot()} title={t("Export snapshot")} type="button" variant="outline">
+          <Download className={cn("h-3.5 w-3.5", exporting && "animate-pulse")} />
+          {t("Export")}
+        </Button>
         <Button aria-label={t("Refresh observability")} className="h-8 gap-1.5 px-2.5 text-[12px]" onClick={refreshAnalysis} title={t("Refresh observability")} type="button" variant="outline">
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
           {t("Refresh")}
@@ -3256,11 +3290,18 @@ export function AgentAnalysisView({
           <span>{error}</span>
         </div>
       ) : null}
+      {exportError ? (
+        <div className="flex shrink-0 items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[12px] text-destructive">
+          <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{exportError}</span>
+        </div>
+      ) : null}
 
       {selectedSession || snapshot.selectedSession ? (
         <AgentSessionDetailCard
           clearSession={() => setSelectedSession(undefined)}
           detail={snapshot.selectedSession}
+          notify={notify}
           selectedSession={selectedSession}
         />
       ) : null}
@@ -3467,19 +3508,49 @@ function AgentErrorsCard({ errors }: { errors: AgentAnalysisSnapshot["errors"] }
 function AgentSessionDetailCard({
   clearSession,
   detail,
+  notify,
   selectedSession
 }: {
   clearSession: () => void;
   detail?: AgentAnalysisSnapshot["selectedSession"];
+  notify?: (message: string) => void;
   selectedSession?: AgentAnalysisSessionSelection;
 }) {
   const t = useAppText();
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const session = detail?.session;
   const headerLabel = session
     ? `${t(agentKindLabel(session.agent))} / ${compactId(session.id)}`
     : selectedSession
       ? `${t(agentKindLabel(selectedSession.agent))} / ${compactId(selectedSession.id)}`
       : t("Session");
+
+  async function exportSession() {
+    if (exporting || !detail) {
+      return;
+    }
+    if (!window.ccr?.exportTextFile) {
+      setExportError(t("Export is only available in the Electron app."));
+      return;
+    }
+    setExporting(true);
+    setExportError("");
+    try {
+      const result = await window.ccr.exportTextFile({
+        content: JSON.stringify(detail, null, 2),
+        fileName: `claude-code-router-session-${compactId(detail.session.id)}.json`,
+        filters: [{ extensions: ["json"], name: "JSON" }]
+      });
+      if (!result.canceled && result.file) {
+        notify?.(`${t("Exported")}: ${result.file}`);
+      }
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <Dialog className="items-start" onOpenChange={(open) => !open && clearSession()} open>
@@ -3491,10 +3562,19 @@ function AgentSessionDetailCard({
               {headerLabel}
             </div>
           </div>
+          <Button aria-label={t("Export session")} disabled={!detail || exporting} onClick={() => void exportSession()} size="iconSm" title={t("Export session")} type="button" variant="ghost">
+            <Download className={cn("h-3.5 w-3.5", exporting && "animate-pulse")} />
+          </Button>
           <Button aria-label={t("Close")} onClick={clearSession} size="iconSm" title={t("Close")} type="button" variant="ghost">
             <X className="h-3.5 w-3.5" />
           </Button>
         </DialogHeader>
+        {exportError ? (
+          <div className="mx-6 mt-2 flex shrink-0 items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[12px] text-destructive">
+            <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{exportError}</span>
+          </div>
+        ) : null}
         <DialogBody>
         {!detail ? (
           <AnalysisEmptyState label={t("Loading session metrics")} />
