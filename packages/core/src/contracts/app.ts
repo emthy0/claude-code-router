@@ -1685,6 +1685,31 @@ export type RequestLogPage = {
   totalPages: number;
 };
 
+export type RequestLogExportFormat = "csv" | "json";
+
+export type RequestLogExportRequest = {
+  filter?: RequestLogListFilter;
+  format: RequestLogExportFormat;
+  ids?: number[];
+};
+
+export type RequestLogExportResult = {
+  canceled: boolean;
+  file?: string;
+  total?: number;
+};
+
+export type AppExportTextFileRequest = {
+  content: string;
+  fileName: string;
+  filters?: Array<{ extensions: string[]; name: string }>;
+};
+
+export type AppExportTextFileResult = {
+  canceled: boolean;
+  file?: string;
+};
+
 export type UsageStatsRange = "today" | "24h" | "7d" | "30d";
 
 export type UsageStatsFilter = {
@@ -1790,6 +1815,8 @@ export type AgentAnalysisRequestRow = {
   path: string;
   provider: string;
   requestId: string;
+  requestedModel?: string;
+  routedModel?: string;
   routeReason?: string;
   sessionId: string;
   statusCode: number;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { RequestLogStore } from "../../packages/core/src/observability/request-log-store.ts";
+import { formatRequestLogEntriesAsCsv, formatRequestLogEntriesAsJson } from "../../packages/core/src/observability/request-log-export.ts";
 
 test("RequestLogStore keeps list rows lightweight and detail rows complete", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "ccr-request-log-test-"));
@@ -308,6 +309,63 @@ test("RequestLogStore analyzes agent sessions and exposes trace payloads", async
     assert.equal(resultPayload.found, true);
     assert.equal(resultPayload.kind, "json");
     assert.match(resultPayload.content, /files/);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("RequestLogStore.listForExport fetches full bodies by filter and by explicit ids", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ccr-request-log-export-test-"));
+  try {
+    const store = new RequestLogStore(path.join(dir, "request-logs.sqlite"));
+
+    for (let index = 0; index < 3; index += 1) {
+      const body = JSON.stringify({ messages: [{ content: `hello-${index}`, role: "user" }], model: "request-model" });
+      const response = JSON.stringify({
+        model: "response-model",
+        usage: { input_tokens: index + 1, output_tokens: index + 2, total_tokens: index + 3 }
+      });
+      await store.record({
+        completedAt: new Date().toISOString(),
+        durationMs: 10 + index,
+        method: "POST",
+        path: "/v1/messages",
+        providerName: index === 1 ? "other-provider" : "test-provider",
+        requestBody: Buffer.from(body, "utf8"),
+        requestHeaders: { "content-type": "application/json" },
+        requestId: `request-log-export-test-${index}`,
+        responseBodyText: response,
+        responseHeaders: { "content-type": "application/json" },
+        startedAt: new Date().toISOString(),
+        statusCode: 200,
+        url: "http://127.0.0.1:3456/v1/messages"
+      });
+    }
+
+    const byFilter = await store.listForExport({ filter: { provider: "test-provider" }, format: "json" });
+    assert.equal(byFilter.length, 2);
+    for (const entry of byFilter) {
+      assert.equal(entry.provider, "test-provider");
+      assert.match(entry.requestBody.text, /request-model/);
+      assert.match(entry.responseBody?.text ?? "", /response-model/);
+    }
+
+    const allEntries = await store.listForExport({ format: "json" });
+    assert.equal(allEntries.length, 3);
+    const selectedIds = allEntries.slice(0, 2).map((entry) => entry.id);
+    const byIds = await store.listForExport({ format: "json", ids: selectedIds });
+    assert.deepEqual(byIds.map((entry) => entry.id).sort(), [...selectedIds].sort());
+
+    const csv = formatRequestLogEntriesAsCsv(allEntries);
+    const csvLines = csv.split("\r\n");
+    assert.equal(csvLines.length, 4);
+    assert.match(csvLines[0], /^id,createdAt/);
+    assert.equal(csvLines.length - 1, allEntries.length);
+
+    const json = formatRequestLogEntriesAsJson(allEntries);
+    const parsed = JSON.parse(json);
+    assert.equal(parsed.length, allEntries.length);
+    assert.equal(parsed[0].requestId, allEntries[0].requestId);
   } finally {
     rmSync(dir, { force: true, recursive: true });
   }

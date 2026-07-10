@@ -457,7 +457,17 @@ export const appCopy: Record<ResolvedLanguage, AppCopy> = {
       "Search virtual models": "Search Fusion",
       "Virtual": "Fusion",
       "Virtual models": "Fusion",
-      "Header中未收到Authorization参数，无法进行身份验证。": "Missing Authorization header, so authentication could not be performed."
+      "Header中未收到Authorization参数，无法进行身份验证。": "Missing Authorization header, so authentication could not be performed.",
+      "Export CSV": "Export CSV",
+      "Export JSON": "Export JSON",
+      "Export selected": "Export selected",
+      "Export all matching filter": "Export all matching filter",
+      "Export session": "Export session",
+      "Export snapshot": "Export snapshot",
+      "Select all on page": "Select all on page",
+      "Clear selection": "Clear selection",
+      "selected": "selected",
+      "Export is only available in the Electron app.": "Export is only available in the Electron app."
     }
   },
   zh: {
@@ -1725,7 +1735,17 @@ export const appCopy: Record<ResolvedLanguage, AppCopy> = {
       "per day": "每天",
       "per hour": "每小时",
       "per minute": "每分钟",
-      "running": "运行中"
+      "running": "运行中",
+      "Export CSV": "导出 CSV",
+      "Export JSON": "导出 JSON",
+      "Export selected": "导出所选",
+      "Export all matching filter": "导出全部匹配结果",
+      "Export session": "导出会话",
+      "Export snapshot": "导出快照",
+      "Select all on page": "全选本页",
+      "Clear selection": "清除选择",
+      "selected": "已选",
+      "Export is only available in the Electron app.": "导出功能仅在 Electron 应用中可用。"
     }
   }
 };

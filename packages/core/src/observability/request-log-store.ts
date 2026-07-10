@@ -32,6 +32,7 @@ import type {
   RequestLogBody,
   RequestLogDetailRequest,
   RequestLogEntry,
+  RequestLogExportRequest,
   RequestLogFilterOptions,
   RequestLogListFilter,
   RequestLogPage,
@@ -149,6 +150,8 @@ type AnalyzedAgentRequest = AgentAnalysisRequestRow & {
 
 type AgentLogDetails = {
   agent: AgentKind;
+  requestedModel?: string;
+  routedModel?: string;
   routeReason?: string;
   sessionId: string;
   subagentModel?: string;
@@ -200,6 +203,46 @@ const maxTracePayloadPreviewChars = 1600;
 const requestLogBodyMetadataSelect = `
             '' AS request_body_text,
             '' AS response_body_text
+`;
+const maxRequestLogExportRows = 20000;
+const requestLogFullColumnsSelect = `
+            rowid AS id,
+            created_at,
+            completed_at,
+            request_id,
+            client,
+            method,
+            path,
+            url,
+            provider,
+            credential_id,
+            credential_chain,
+            credential_saturated,
+            model,
+            is_stream,
+            status_code,
+            ok,
+            duration_ms,
+            input_tokens,
+            output_tokens,
+            reasoning_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            total_tokens,
+            cost_usd,
+            request_headers,
+            response_headers,
+            request_body_text,
+            request_body_encoding,
+            request_body_content_type,
+            request_body_size_bytes,
+            request_body_truncated,
+            response_body_text,
+            response_body_encoding,
+            response_body_content_type,
+            response_body_size_bytes,
+            response_body_truncated,
+            error
 `;
 const emptyAgentAnalysisTotals: AgentAnalysisTotals = {
   avgDurationMs: 0,
@@ -617,6 +660,35 @@ export class RequestLogStore {
     return readRequestLogById(database, requestLogId);
   }
 
+  async listForExport(request: RequestLogExportRequest): Promise<RequestLogEntry[]> {
+    const database = await this.getDatabase();
+    this.pruneOldRequestLogs(database);
+
+    const ids = (request.ids ?? [])
+      .map((id) => normalizeCount(id))
+      .filter((id) => id > 0);
+    if (ids.length > 0) {
+      const entries = ids
+        .map((id) => readRequestLogById(database, id))
+        .filter((entry): entry is StoredRequestLogEntry => Boolean(entry));
+      return entries;
+    }
+
+    const query = buildLogWhereClause(request.filter ?? {});
+    return queryRows(
+      database,
+      `
+        SELECT
+          ${requestLogFullColumnsSelect}
+        FROM request_logs
+        ${query.where}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+      `,
+      [...query.params, maxRequestLogExportRows]
+    ).map(toRequestLogEntry);
+  }
+
   async analyze(filter: AgentAnalysisFilter = {}): Promise<AgentAnalysisSnapshot> {
     const database = await this.getDatabase();
     this.pruneOldRequestLogs(database);
@@ -886,6 +958,15 @@ export async function getRequestLogDetail(request: RequestLogDetailRequest): Pro
   }
 }
 
+export async function getRequestLogsForExport(request: RequestLogExportRequest): Promise<RequestLogEntry[]> {
+  try {
+    return await requestLogStore.listForExport(request);
+  } catch (error) {
+    console.warn(`[request-log] Failed to read request logs for export: ${formatError(error)}`);
+    throw error;
+  }
+}
+
 export async function getAgentAnalysis(filter?: AgentAnalysisFilter): Promise<AgentAnalysisSnapshot> {
   try {
     return await requestLogStore.analyze(filter);
@@ -934,6 +1015,8 @@ function toAnalyzedAgentRequest(entry: StoredRequestLogEntry): AnalyzedAgentRequ
     path: entry.path,
     provider: entry.provider,
     requestId: entry.requestId,
+    requestedModel: details.requestedModel,
+    routedModel: details.routedModel,
     routeReason: details.routeReason,
     sessionId: details.sessionId,
     startedAtMs,
@@ -969,6 +1052,8 @@ function extractAgentLogDetails(entry: StoredRequestLogEntry): AgentLogDetails {
 
   return {
     agent,
+    requestedModel: readHeaderValue(entry.requestHeaders, "x-ccr-requested-model"),
+    routedModel,
     routeReason,
     sessionId: extractAgentSessionId(entry, requestPayloads, agent),
     subagentModel,

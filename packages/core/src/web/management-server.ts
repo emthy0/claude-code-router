@@ -23,7 +23,8 @@ import { getProfileOpenCommand, getProfileRuntimeStatus, openProfileFromCcr, sto
 import { ensureProxyCertificateAuthority } from "@ccr/core/proxy/certificates";
 import { proxyService } from "@ccr/core/proxy/service";
 import { listMcpServerTools } from "@ccr/core/mcp/tool-discovery";
-import { getAgentAnalysis, getAgentTracePayload, getRequestLogDetail, getRequestLogs } from "@ccr/core/observability/request-log-store";
+import { getAgentAnalysis, getAgentTracePayload, getRequestLogDetail, getRequestLogs, getRequestLogsForExport } from "@ccr/core/observability/request-log-store";
+import { formatRequestLogEntriesAsCsv, formatRequestLogEntriesAsJson } from "@ccr/core/observability/request-log-export";
 import { getUsageStats } from "@ccr/core/usage/store";
 import { gatewayService } from "@ccr/core/gateway/service";
 import { shouldRestartGatewayForRuntimeConfigChange } from "@ccr/core/gateway/runtime-change";
@@ -34,6 +35,8 @@ import type {
   ApiKeyConfig,
   AppConfig,
   AppDataExportResult,
+  AppExportTextFileRequest,
+  AppExportTextFileResult,
   AppInfo,
   AppSaveConfigOptions,
   AppUpdateStatus,
@@ -59,6 +62,8 @@ import type {
   ProviderIconDetectionRequest,
   ProviderManifestFetchRequest,
   RequestLogDetailRequest,
+  RequestLogExportRequest,
+  RequestLogExportResult,
   RequestLogListFilter,
   UsageStatsFilter,
   UsageStatsRange
@@ -271,6 +276,8 @@ const rpcHandlers: Record<string, RpcHandler> = {
   closeBotGatewayQrWindow: (_request) => ({ closed: false }),
   detectProviderIcon: (request) => detectProviderIcon(request as ProviderIconDetectionRequest),
   exportData: () => exportAppData(),
+  exportRequestLogs: (request) => exportRequestLogsToFile(request as RequestLogExportRequest),
+  exportTextFile: (request) => exportTextFile(request as AppExportTextFileRequest),
   fetchProviderManifest: (request) => fetchProviderManifest(request as ProviderManifestFetchRequest),
   getAgentAnalysis: (filter) => getAgentAnalysis(filter as AgentAnalysisFilter | undefined),
   getAgentTracePayload: (request) => getAgentTracePayload(request as AgentAnalysisTracePayloadRequest),
@@ -747,6 +754,42 @@ async function exportAppData(): Promise<AppDataExportResult> {
 function defaultExportDir(): string {
   const downloads = path.join(os.homedir(), "Downloads");
   return existsSync(downloads) ? downloads : CONFIGDIR;
+}
+
+async function exportRequestLogsToFile(request: RequestLogExportRequest): Promise<RequestLogExportResult> {
+  const entries = await getRequestLogsForExport(request);
+  const exportDir = defaultExportDir();
+  mkdirSync(exportDir, { recursive: true });
+  const timestamp = fileSafeTimestamp(new Date().toISOString());
+  const extension = request.format === "csv" ? "csv" : "json";
+  const file = path.join(exportDir, `claude-code-router-request-logs-${timestamp}.${extension}`);
+  assertExportTargetIsNotInternalDataFile(file);
+  const content = request.format === "csv"
+    ? formatRequestLogEntriesAsCsv(entries)
+    : formatRequestLogEntriesAsJson(entries);
+  writeFileSync(file, content, { encoding: "utf8", mode: 0o600 });
+  return {
+    canceled: false,
+    file,
+    total: entries.length
+  };
+}
+
+function exportTextFile(request: AppExportTextFileRequest): AppExportTextFileResult {
+  const exportDir = defaultExportDir();
+  mkdirSync(exportDir, { recursive: true });
+  const file = path.join(exportDir, safeExportFileName(request.fileName));
+  assertExportTargetIsNotInternalDataFile(file);
+  writeFileSync(file, request.content, { encoding: "utf8", mode: 0o600 });
+  return {
+    canceled: false,
+    file
+  };
+}
+
+function safeExportFileName(value: string): string {
+  const raw = typeof value === "string" ? value : "";
+  return path.basename(raw).replace(/[<>:"/\\|?*\x00-\x1f]/g, "-").trim() || "ccr-export.json";
 }
 
 function readDataExportFiles(): Array<{ base64: string; name: string; path: string; sizeBytes: number }> {

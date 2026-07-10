@@ -27,12 +27,13 @@ import { desktopCliCommandName, getProfileOpenCommand, getProfileRuntimeStatus, 
 import { ensureProxyCertificateAuthority } from "@ccr/core/proxy/certificates";
 import { proxyService } from "@ccr/core/proxy/service";
 import { listMcpServerTools } from "@ccr/core/mcp/tool-discovery";
-import { getAgentAnalysis, getAgentTracePayload, getRequestLogDetail, getRequestLogs } from "@ccr/core/observability/request-log-store";
+import { getAgentAnalysis, getAgentTracePayload, getRequestLogDetail, getRequestLogs, getRequestLogsForExport } from "@ccr/core/observability/request-log-store";
+import { formatRequestLogEntriesAsCsv, formatRequestLogEntriesAsJson } from "@ccr/core/observability/request-log-export";
 import trayController from "./tray-controller";
 import { appUpdateService } from "./update-service";
 import { getUsageStats } from "@ccr/core/usage/store";
 import windowsManager from "./windows";
-import type { AgentAnalysisFilter, AgentAnalysisTracePayloadRequest, ApiKeyConfig, AppCaptureElementPngRequest, AppCaptureElementPngResult, AppConfig, AppDataExportResult, AppImageExportTargetRequest, AppImageExportTargetResult, AppInfo, AppRenderHtmlPngRequest, AppRenderHtmlPngResult, AppSaveConfigOptions, BotGatewayQrLoginCancelRequest, BotGatewayQrLoginStartRequest, BotGatewayQrLoginWaitRequest, BotGatewayQrWindowCloseRequest, BotGatewayQrWindowOpenRequest, GatewayPluginAppConfig, GatewayProviderConnectivityCheckRequest, GatewayProviderProbeCandidatesRequest, GatewayProviderProbeRequest, GatewayStatus, LocalAgentProviderImportRequest, PluginDependency, PluginDirectorySelection, PluginMarketplaceEntry, ProfileApplyResult, ProfileOpenRequest, ProviderAccountResetRequest, ProviderAccountSnapshotRequestOptions, ProviderAccountTestRequest, ProviderCatalogModelsRequest, ProviderIconDetectionRequest, ProviderManifestFetchRequest, RequestLogListFilter, UsageStatsFilter, UsageStatsRange } from "@ccr/core/contracts/app";
+import type { AgentAnalysisFilter, AgentAnalysisTracePayloadRequest, ApiKeyConfig, AppCaptureElementPngRequest, AppCaptureElementPngResult, AppConfig, AppDataExportResult, AppExportTextFileRequest, AppExportTextFileResult, AppImageExportTargetRequest, AppImageExportTargetResult, AppInfo, AppRenderHtmlPngRequest, AppRenderHtmlPngResult, AppSaveConfigOptions, BotGatewayQrLoginCancelRequest, BotGatewayQrLoginStartRequest, BotGatewayQrLoginWaitRequest, BotGatewayQrWindowCloseRequest, BotGatewayQrWindowOpenRequest, GatewayPluginAppConfig, GatewayProviderConnectivityCheckRequest, GatewayProviderProbeCandidatesRequest, GatewayProviderProbeRequest, GatewayStatus, LocalAgentProviderImportRequest, PluginDependency, PluginDirectorySelection, PluginMarketplaceEntry, ProfileApplyResult, ProfileOpenRequest, ProviderAccountResetRequest, ProviderAccountSnapshotRequestOptions, ProviderAccountTestRequest, ProviderCatalogModelsRequest, ProviderIconDetectionRequest, ProviderManifestFetchRequest, RequestLogExportRequest, RequestLogExportResult, RequestLogListFilter, UsageStatsFilter, UsageStatsRange } from "@ccr/core/contracts/app";
 
 const pluginMarketplace: PluginMarketplaceEntry[] = [
   {
@@ -74,6 +75,12 @@ ipcMain.handle(IPC_CHANNELS.appGetInfo, () => {
 
 ipcMain.handle(IPC_CHANNELS.appExportData, async (event): Promise<AppDataExportResult> => {
   return exportAppData(BrowserWindow.fromWebContents(event.sender));
+});
+ipcMain.handle(IPC_CHANNELS.appExportRequestLogs, async (event, request: RequestLogExportRequest): Promise<RequestLogExportResult> => {
+  return exportRequestLogsToFile(BrowserWindow.fromWebContents(event.sender), request);
+});
+ipcMain.handle(IPC_CHANNELS.appExportTextFile, async (event, request: AppExportTextFileRequest): Promise<AppExportTextFileResult> => {
+  return exportTextFile(BrowserWindow.fromWebContents(event.sender), request);
 });
 ipcMain.handle(IPC_CHANNELS.appCaptureElementPng, async (event, request: AppCaptureElementPngRequest): Promise<AppCaptureElementPngResult> => {
   return captureElementPng(BrowserWindow.fromWebContents(event.sender), request);
@@ -398,6 +405,48 @@ async function exportAppData(window: BrowserWindow | null): Promise<AppDataExpor
   };
 }
 
+async function exportRequestLogsToFile(window: BrowserWindow | null, request: RequestLogExportRequest): Promise<RequestLogExportResult> {
+  const entries = await getRequestLogsForExport(request);
+  const timestamp = fileSafeTimestamp(new Date().toISOString());
+  const extension = request.format === "csv" ? "csv" : "json";
+  const fileName = `claude-code-router-request-logs-${timestamp}.${extension}`;
+  const dialogOptions = requestLogExportSaveDialogOptions(fileName, request.format);
+  const result = window
+    ? await dialog.showSaveDialog(window, dialogOptions)
+    : await dialog.showSaveDialog(dialogOptions);
+  if (result.canceled || !result.filePath) {
+    return { canceled: true };
+  }
+
+  assertExportTargetIsNotInternalDataFile(result.filePath);
+  const content = request.format === "csv"
+    ? formatRequestLogEntriesAsCsv(entries)
+    : formatRequestLogEntriesAsJson(entries);
+  writeFileSync(result.filePath, content, { encoding: "utf8", mode: 0o600 });
+  return {
+    canceled: false,
+    file: result.filePath,
+    total: entries.length
+  };
+}
+
+async function exportTextFile(window: BrowserWindow | null, request: AppExportTextFileRequest): Promise<AppExportTextFileResult> {
+  const dialogOptions = textExportSaveDialogOptions(request.fileName, request.filters);
+  const result = window
+    ? await dialog.showSaveDialog(window, dialogOptions)
+    : await dialog.showSaveDialog(dialogOptions);
+  if (result.canceled || !result.filePath) {
+    return { canceled: true };
+  }
+
+  assertExportTargetIsNotInternalDataFile(result.filePath);
+  writeFileSync(result.filePath, request.content, { encoding: "utf8", mode: 0o600 });
+  return {
+    canceled: false,
+    file: result.filePath
+  };
+}
+
 async function captureElementPng(window: BrowserWindow | null, request: AppCaptureElementPngRequest): Promise<AppCaptureElementPngResult> {
   if (!window) {
     throw new Error("Window is unavailable.");
@@ -506,6 +555,33 @@ function dataExportSaveDialogOptions(exportedAt: string): SaveDialogOptions {
     ],
     title: "Export CCR data"
   };
+}
+
+function requestLogExportSaveDialogOptions(fileName: string, format: RequestLogExportRequest["format"]): SaveDialogOptions {
+  return {
+    buttonLabel: "Export",
+    defaultPath: path.join(app.getPath("downloads"), fileName),
+    filters: [
+      format === "csv"
+        ? { extensions: ["csv"], name: "CSV" }
+        : { extensions: ["json"], name: "JSON" }
+    ],
+    title: "Export request logs"
+  };
+}
+
+function textExportSaveDialogOptions(fileName: string, filters?: Array<{ extensions: string[]; name: string }>): SaveDialogOptions {
+  return {
+    buttonLabel: "Export",
+    defaultPath: path.join(app.getPath("downloads"), safeExportFileName(fileName)),
+    filters: filters && filters.length > 0 ? filters : [{ extensions: ["json"], name: "JSON" }],
+    title: "Export data"
+  };
+}
+
+function safeExportFileName(value: string): string {
+  const raw = typeof value === "string" ? value : "";
+  return path.basename(raw).replace(/[<>:"/\\|?*\x00-\x1f]/g, "-").trim() || "ccr-export.json";
 }
 
 function shareCardSaveDialogOptions(fileName: string): SaveDialogOptions {

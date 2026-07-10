@@ -1,15 +1,15 @@
 import { memo } from "react";
 import { Maximize2, X } from "lucide-react";
 import {
-  AnimatedIconSwap, Check, ChevronDown, ChevronLeft,
+  AnimatedIconSwap, Check, Checkbox, ChevronDown, ChevronLeft,
   ChevronRight, clampNumber, clientInitial, cn, Copy, copyTextToClipboard,
-  Database, filterLogText, formatBytes, formatCompactNumber, formatDuration,
+  Database, Download, filterLogText, formatBytes, formatCompactNumber, formatDuration,
   formatLogBodyView, formatLogDateTime, formatLogTokenSummary, formatNetworkRequestRaw, formatNetworkResponseRaw, formatUsdCost,
   isJsonContainer, jsonChildPath, logRequestModel,
   logResponseModel, logSelectOptions, motion, MoveRight, Network, networkCodeLabel,
   networkExchangeMatchesQuery, networkHeaderRows, networkLifecycleLabel, networkQueryRows, networkRowId, networkSummaryRows,
   Pause, Play, ProxyNetworkBody, ProxyNetworkExchange, ProxyNetworkSnapshot, ProxyStatus,
-  ReactNode, ReactPointerEvent, RefreshCw, RequestLogBody, RequestLogEntry, RequestLogListFilter,
+  ReactNode, ReactPointerEvent, RefreshCw, RequestLogBody, RequestLogEntry, RequestLogExportFormat, RequestLogListFilter,
   RequestLogPage, requestLogPageSizeOptions, RequestLogStatusFilter, requestLogStatusOptions, Search, Select,
   translateOptions, Trash2, useAppNumberLocale, useAppText, useCallback, useEffect, useMemo, useRef,
   useState
@@ -292,6 +292,7 @@ export function LogsView({
   error,
   filter,
   loading,
+  notify,
   page,
   refreshLogs,
   updateFilter
@@ -299,6 +300,7 @@ export function LogsView({
   error: string;
   filter: RequestLogListFilter;
   loading: boolean;
+  notify?: (message: string) => void;
   page: RequestLogPage;
   refreshLogs: () => void;
   updateFilter: (patch: RequestLogListFilter, resetPage?: boolean) => void;
@@ -309,6 +311,9 @@ export function LogsView({
   const [detailErrorById, setDetailErrorById] = useState<Record<number, string>>({});
   const [detailLoadingId, setDetailLoadingId] = useState<number>();
   const [logColumnWidths, setLogColumnWidths] = useState<LogTableColumnWidths>({});
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [exportingFormat, setExportingFormat] = useState<RequestLogExportFormat>();
+  const [exportError, setExportError] = useState("");
   const logTableHeaderRef = useRef<HTMLDivElement>(null);
   const firstItem = page.total === 0 ? 0 : (page.page - 1) * page.pageSize + 1;
   const lastItem = Math.min(page.total, page.page * page.pageSize);
@@ -360,6 +365,80 @@ export function LogsView({
     }
     setExpandedId(undefined);
   }, [expandedId, page.items]);
+
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const visibleIds = new Set(page.items.map((item) => item.id));
+      const next = new Set([...current].filter((id) => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [page.items]);
+
+  const selectedCount = selectedIds.size;
+  const allVisibleSelected = page.items.length > 0 && page.items.every((item) => selectedIds.has(item.id));
+  const lastSelectedIndexRef = useRef<number | null>(null);
+
+  function toggleRowSelected(id: number, index: number, rangeSelect: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      // shift/ctrl range-select: add every row between the last anchor and this one.
+      if (rangeSelect && lastSelectedIndexRef.current !== null) {
+        const start = Math.min(lastSelectedIndexRef.current, index);
+        const end = Math.max(lastSelectedIndexRef.current, index);
+        for (let i = start; i <= end; i += 1) {
+          const item = page.items[i];
+          if (item) {
+            next.add(item.id);
+          }
+        }
+        return next;
+      }
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    lastSelectedIndexRef.current = index;
+  }
+
+  function toggleAllVisibleSelected() {
+    setSelectedIds((current) => {
+      if (allVisibleSelected) {
+        const next = new Set(current);
+        page.items.forEach((item) => next.delete(item.id));
+        return next;
+      }
+      const next = new Set(current);
+      page.items.forEach((item) => next.add(item.id));
+      return next;
+    });
+  }
+
+  async function exportLogs(format: RequestLogExportFormat) {
+    if (exportingFormat || !window.ccr?.exportRequestLogs) {
+      if (!window.ccr?.exportRequestLogs) {
+        setExportError(t("Export is only available in the Electron app."));
+      }
+      return;
+    }
+    setExportingFormat(format);
+    setExportError("");
+    try {
+      const request = selectedCount > 0
+        ? { format, ids: [...selectedIds] }
+        : { filter, format };
+      const result = await window.ccr.exportRequestLogs(request);
+      if (!result.canceled && result.file) {
+        notify?.(`${t("Exported")}: ${result.file}`);
+      }
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExportingFormat(undefined);
+    }
+  }
 
   function startLogColumnResize(columnIndex: number, event: ReactPointerEvent<HTMLButtonElement>) {
     const header = logTableHeaderRef.current;
@@ -499,28 +578,64 @@ export function LogsView({
           >
             <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
           </button>
+          {selectedCount > 0 ? (
+            <span className="network-count rounded-full px-2 py-0.5 text-[11px] font-semibold">
+              {selectedCount} {t("selected")}
+            </span>
+          ) : null}
+          <button
+            aria-label={selectedCount > 0 ? t("Export selected") : t("Export all matching filter")}
+            className="network-control-button flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px] font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring/30"
+            disabled={Boolean(exportingFormat) || page.total === 0}
+            onClick={() => void exportLogs("csv")}
+            title={selectedCount > 0 ? t("Export selected") : t("Export all matching filter")}
+            type="button"
+          >
+            <Download className={cn("h-3.5 w-3.5", exportingFormat === "csv" && "animate-pulse")} />
+            {t("Export CSV")}
+          </button>
+          <button
+            aria-label={selectedCount > 0 ? t("Export selected") : t("Export all matching filter")}
+            className="network-control-button flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px] font-semibold outline-none disabled:cursor-not-allowed disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-ring/30"
+            disabled={Boolean(exportingFormat) || page.total === 0}
+            onClick={() => void exportLogs("json")}
+            title={selectedCount > 0 ? t("Export selected") : t("Export all matching filter")}
+            type="button"
+          >
+            <Download className={cn("h-3.5 w-3.5", exportingFormat === "json" && "animate-pulse")} />
+            {t("Export JSON")}
+          </button>
         </div>
 
         {error ? (
           <div className="network-error-box mx-3 mt-3 rounded-md border px-3 py-2 text-[12px]">{error}</div>
         ) : null}
+        {exportError ? (
+          <div className="network-error-box mx-3 mt-3 rounded-md border px-3 py-2 text-[12px]">{exportError}</div>
+        ) : null}
 
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="network-table-scroll min-h-0 flex-1 overflow-auto">
             <div className="w-full min-w-0">
-              <div
-                className={cn("network-table-header sticky top-0 z-10 grid h-9 items-center border-b text-[12px] font-semibold", logTableGridClass)}
-                ref={logTableHeaderRef}
-                style={logTableGridStyle}
-              >
-                {visibleLogColumns.map((column, index) => (
-                  <NetworkHeaderCell
-                    key={column.id}
-                    label={logTableColumnLabel(column.id, t)}
-                    onResizeStart={index < visibleLogColumns.length - 1 ? (event) => startLogColumnResize(index, event) : undefined}
-                    resizeLabel={t("Resize column width")}
+              <div className="network-table-header sticky top-0 z-10 flex h-9 items-center border-b text-[12px] font-semibold">
+                <div className="flex h-full w-9 shrink-0 items-center justify-center">
+                  <Checkbox
+                    aria-label={t("Select all on page")}
+                    checked={allVisibleSelected}
+                    disabled={page.items.length === 0}
+                    onCheckedChange={toggleAllVisibleSelected}
                   />
-                ))}
+                </div>
+                <div className={cn("grid h-full min-w-0 flex-1 items-center", logTableGridClass)} ref={logTableHeaderRef} style={logTableGridStyle}>
+                  {visibleLogColumns.map((column, index) => (
+                    <NetworkHeaderCell
+                      key={column.id}
+                      label={logTableColumnLabel(column.id, t)}
+                      onResizeStart={index < visibleLogColumns.length - 1 ? (event) => startLogColumnResize(index, event) : undefined}
+                      resizeLabel={t("Resize column width")}
+                    />
+                  ))}
+                </div>
               </div>
 
               {page.items.length === 0 ? (
@@ -542,6 +657,8 @@ export function LogsView({
                   logTableGridClass={logTableGridClass}
                   logTableGridStyle={logTableGridStyle}
                   onToggle={toggleExpandedLog}
+                  onToggleSelected={toggleRowSelected}
+                  selected={selectedIds.has(item.id)}
                 />
               ))}
             </div>
@@ -606,7 +723,9 @@ const LogRow = memo(function LogRow({
   item,
   logTableGridClass,
   logTableGridStyle,
-  onToggle
+  onToggle,
+  onToggleSelected,
+  selected
 }: {
   detailError?: string;
   detailLoading?: boolean;
@@ -617,6 +736,8 @@ const LogRow = memo(function LogRow({
   logTableGridClass: string;
   logTableGridStyle?: LogTableGridStyle;
   onToggle: (id: number) => void;
+  onToggleSelected: (id: number, index: number, rangeSelect: boolean) => void;
+  selected: boolean;
 }) {
   const t = useAppText();
   const numberLocale = useAppNumberLocale();
@@ -625,40 +746,50 @@ const LogRow = memo(function LogRow({
 
   return (
     <div>
-      <button
-        aria-expanded={expanded}
+      <div
         className={cn(
-          "network-row grid h-10 w-full items-center border-0 px-0 text-left text-[12px] font-semibold outline-none transition-colors",
-          logTableGridClass,
+          "network-row flex h-10 w-full items-center border-0 text-left text-[12px] font-semibold transition-colors",
           index % 2 === 0 ? "network-row-even" : "network-row-odd",
-          expanded && "network-row-selected"
+          (expanded || selected) && "network-row-selected"
         )}
-        onClick={() => onToggle(item.id)}
-        style={logTableGridStyle}
-        type="button"
       >
-        <div className="truncate px-3 font-mono text-[11px]" title={createdAt}>
-          {createdAt}
+        <div className="flex h-full w-9 shrink-0 items-center justify-center">
+          <Checkbox
+            aria-label={t("selected")}
+            checked={selected}
+            onClick={(event) => onToggleSelected(item.id, index, event.shiftKey)}
+          />
         </div>
-        <div className="flex min-w-0 items-center gap-2 px-2">
-          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
-          <LogStatusDot entry={item} />
-          <span className="network-row-secondary truncate">{item.statusCode || "-"}</span>
-          {item.retryAttempts.length > 0 ? (
-            <span
-              className="network-service-paused shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
-              title={`${t("Retry attempts")}: ${item.retryAttempts.length}`}
-            >
-              R{item.retryAttempts.length}
-            </span>
-          ) : null}
-        </div>
-        <LogStreamCell entry={item} />
-        <LogModelRouteCell entry={item} />
-        {hasCredentialInfo ? <LogCredentialCell entry={item} /> : null}
-        <div className="network-row-secondary truncate px-2" title={tokenSummary}>{tokenSummary}</div>
-        <div className="network-row-secondary truncate px-2">{formatDuration(item.durationMs)}</div>
-      </button>
+        <button
+          aria-expanded={expanded}
+          className={cn("grid h-full min-w-0 flex-1 items-center border-0 bg-transparent px-0 text-left text-[12px] font-semibold outline-none", logTableGridClass)}
+          onClick={() => onToggle(item.id)}
+          style={logTableGridStyle}
+          type="button"
+        >
+          <div className="truncate px-3 font-mono text-[11px]" title={createdAt}>
+            {createdAt}
+          </div>
+          <div className="flex min-w-0 items-center gap-2 px-2">
+            <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
+            <LogStatusDot entry={item} />
+            <span className="network-row-secondary truncate">{item.statusCode || "-"}</span>
+            {item.retryAttempts.length > 0 ? (
+              <span
+                className="network-service-paused shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
+                title={`${t("Retry attempts")}: ${item.retryAttempts.length}`}
+              >
+                R{item.retryAttempts.length}
+              </span>
+            ) : null}
+          </div>
+          <LogStreamCell entry={item} />
+          <LogModelRouteCell entry={item} />
+          {hasCredentialInfo ? <LogCredentialCell entry={item} /> : null}
+          <div className="network-row-secondary truncate px-2" title={tokenSummary}>{tokenSummary}</div>
+          <div className="network-row-secondary truncate px-2">{formatDuration(item.durationMs)}</div>
+        </button>
+      </div>
       {expanded ? <LogExpandedDetails detailError={detailError} detailLoading={detailLoading} entry={item} /> : null}
     </div>
   );

@@ -9,6 +9,8 @@ import type {
   AppCaptureElementPngRequest,
   AppCaptureElementPngResult,
   AppDataExportResult,
+  AppExportTextFileRequest,
+  AppExportTextFileResult,
   AppInfo,
   AppImageExportTargetRequest,
   AppImageExportTargetResult,
@@ -67,6 +69,8 @@ import type {
   ProxyStatus,
   RequestLogDetailRequest,
   RequestLogEntry,
+  RequestLogExportRequest,
+  RequestLogExportResult,
   RequestLogListFilter,
   RequestLogPage,
   UsageStatsFilter,
@@ -88,6 +92,8 @@ declare global {
       closeTray: () => Promise<void>;
       detectProviderIcon: (request: ProviderIconDetectionRequest) => Promise<ProviderIconDetectionResult>;
       exportData: () => Promise<AppDataExportResult>;
+      exportRequestLogs: (request: RequestLogExportRequest) => Promise<RequestLogExportResult>;
+      exportTextFile: (request: AppExportTextFileRequest) => Promise<AppExportTextFileResult>;
       fetchProviderManifest: (request: ProviderManifestFetchRequest) => Promise<ProviderManifestFetchResult>;
       getAgentAnalysis: (filter?: AgentAnalysisFilter) => Promise<AgentAnalysisSnapshot>;
       getAgentTracePayload: (request: AgentAnalysisTracePayloadRequest) => Promise<AgentAnalysisTracePayloadFullResult>;
