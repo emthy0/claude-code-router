@@ -786,6 +786,7 @@ class GatewayService {
 
     if (method === "POST" && path === "/v1/messages") {
       const body = parseJsonObject(bodyToForward ?? requestBody);
+      const requestedModel = typeof body.model === "string" ? body.model : undefined;
       const routed = await this.plugin.routeRequest({
         body,
         headers: headers as Record<string, string | string[] | undefined>,
@@ -794,6 +795,9 @@ class GatewayService {
       });
       const serialized = Buffer.from(`${JSON.stringify(routed.body)}\n`, "utf8");
       headers["content-type"] = "application/json";
+      if (requestedModel) {
+        headers["x-ccr-requested-model"] = sanitizeHeaderValue(requestedModel);
+      }
       headers["x-ccr-route-reason"] = sanitizeHeaderValue(routed.decision.reason);
       routeFallback = routed.decision.fallback ?? routeFallback;
       if (routed.decision.model) {
@@ -804,6 +808,7 @@ class GatewayService {
     }
     if (method === "POST" && requestProtocolForPath(path) === "openai_responses" && isCodexUserAgent(request.headers)) {
       const body = parseJsonObject(bodyToForward ?? requestBody);
+      const requestedModel = typeof body.model === "string" ? body.model : undefined;
       const routed = await this.plugin.routeRequest({
         body,
         headers: headers as Record<string, string | string[] | undefined>,
@@ -812,6 +817,9 @@ class GatewayService {
       });
       const serialized = Buffer.from(`${JSON.stringify(routed.body)}\n`, "utf8");
       headers["content-type"] = "application/json";
+      if (requestedModel) {
+        headers["x-ccr-requested-model"] = sanitizeHeaderValue(requestedModel);
+      }
       headers["x-ccr-route-reason"] = sanitizeHeaderValue(routed.decision.reason);
       routeFallback = routed.decision.fallback ?? routeFallback;
       if (routed.decision.model) {

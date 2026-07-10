@@ -1815,6 +1815,8 @@ export type AgentAnalysisRequestRow = {
   path: string;
   provider: string;
   requestId: string;
+  requestedModel?: string;
+  routedModel?: string;
   routeReason?: string;
   sessionId: string;
   statusCode: number;

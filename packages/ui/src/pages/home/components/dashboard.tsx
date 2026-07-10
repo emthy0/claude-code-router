@@ -5,7 +5,7 @@ import {
   Card, CardContent, CardHeader, CardTitle, CartesianGrid, Cell, constrainOverviewWidgetSize,
   Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, cn, compactId,
   compactUserAgent, compareProviderAccountSnapshots, ComposedChart, CSS, DEFAULT_OVERVIEW_WIDGETS, DndContext,
-  Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle, Download,
+  Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle, Download,
   DragEndEvent, DragOverEvent, DragOverlay, DragStartEvent, Field, formatAxisNumber, formatBytes,
   formatCompactNumber, formatDuration, formatLogDateTime, formatPercent, formatProviderAccountDetailDate, formatProviderAccountMeterTitle, formatProviderAccountMeterValue,
   formatStatusBucketDate, formatStatusCodeCounts, formatSystemStatusRange, formatToolCounts, formatUsdCost, KeyboardSensor,
@@ -24,7 +24,7 @@ import {
 } from "../shared/index";
 import { buildTokenActivity, type TokenActivityCell } from "@/lib/usage-activity";
 import { ShareCardWidget } from "./share-cards";
-import { Cloud, Rocket } from "lucide-react";
+import { Cloud, Rocket, ScrollText } from "lucide-react";
 export function OverviewView({
   onWidgetsChange,
   overviewWidgets,
@@ -3186,6 +3186,7 @@ export function AgentAnalysisView({
   error,
   loading,
   notify,
+  onViewInLog,
   range,
   refreshAnalysis,
   selectedSession,
@@ -3198,6 +3199,7 @@ export function AgentAnalysisView({
   error: string;
   loading: boolean;
   notify?: (message: string) => void;
+  onViewInLog?: (sessionId: string) => void;
   range: UsageStatsRange;
   refreshAnalysis: () => void;
   selectedSession?: AgentAnalysisSessionSelection;
@@ -3302,6 +3304,7 @@ export function AgentAnalysisView({
           clearSession={() => setSelectedSession(undefined)}
           detail={snapshot.selectedSession}
           notify={notify}
+          onViewInLog={onViewInLog}
           selectedSession={selectedSession}
         />
       ) : null}
@@ -3509,17 +3512,44 @@ function AgentSessionDetailCard({
   clearSession,
   detail,
   notify,
+  onViewInLog,
   selectedSession
 }: {
   clearSession: () => void;
   detail?: AgentAnalysisSnapshot["selectedSession"];
   notify?: (message: string) => void;
+  onViewInLog?: (sessionId: string) => void;
   selectedSession?: AgentAnalysisSessionSelection;
 }) {
   const t = useAppText();
   const [exporting, setExporting] = useState(false);
+  const [downloadingRequests, setDownloadingRequests] = useState(false);
   const [exportError, setExportError] = useState("");
   const session = detail?.session;
+  const traceSessionId = session?.id ?? selectedSession?.id;
+
+  async function downloadSessionRequestLogs() {
+    if (downloadingRequests || !detail || detail.requests.length === 0) {
+      return;
+    }
+    if (!window.ccr?.exportRequestLogs) {
+      setExportError(t("Export is only available in the Electron app."));
+      return;
+    }
+    setDownloadingRequests(true);
+    setExportError("");
+    try {
+      // Pull full request/response detail from the log store by id, not the observability rows.
+      const result = await window.ccr.exportRequestLogs({ format: "json", ids: detail.requests.map((request) => request.id) });
+      if (!result.canceled && result.file) {
+        notify?.(`${t("Exported")}: ${result.file}`);
+      }
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDownloadingRequests(false);
+    }
+  }
   const headerLabel = session
     ? `${t(agentKindLabel(session.agent))} / ${compactId(session.id)}`
     : selectedSession
@@ -3562,9 +3592,6 @@ function AgentSessionDetailCard({
               {headerLabel}
             </div>
           </div>
-          <Button aria-label={t("Export session")} disabled={!detail || exporting} onClick={() => void exportSession()} size="iconSm" title={t("Export session")} type="button" variant="ghost">
-            <Download className={cn("h-3.5 w-3.5", exporting && "animate-pulse")} />
-          </Button>
           <Button aria-label={t("Close")} onClick={clearSession} size="iconSm" title={t("Close")} type="button" variant="ghost">
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -3585,18 +3612,30 @@ function AgentSessionDetailCard({
             <div className="min-w-0">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="text-[12px] font-semibold">{t("Session Requests")}</div>
+                <Button
+                  aria-label={t("Download request logs")}
+                  disabled={downloadingRequests || detail.requests.length === 0}
+                  onClick={() => void downloadSessionRequestLogs()}
+                  size="iconSm"
+                  title={t("Download request logs")}
+                  type="button"
+                  variant="ghost"
+                >
+                  <Download className={cn("h-3.5 w-3.5", downloadingRequests && "animate-pulse")} />
+                </Button>
               </div>
               {detail.requests.length === 0 ? (
                 <AnalysisEmptyState label={t("No session requests")} />
               ) : (
                 <div className={cn("max-h-[260px]", agentListFrameClassName)}>
-                  <table className={cn("min-w-[980px]", agentListTableClassName)}>
+                  <table className={cn("min-w-[1120px]", agentListTableClassName)}>
                     <thead className={agentListHeadClassName}>
                       <tr>
                         <th className="px-3 py-2 font-semibold">{t("Time")}</th>
                         <th className="px-3 py-2 font-semibold">{t("Status")}</th>
-                        <th className="px-3 py-2 font-semibold">{t("Route")}</th>
-                        <th className="px-3 py-2 font-semibold">{t("Model")}</th>
+                        <th className="px-3 py-2 font-semibold" title={t("Model the client requested")}>{t("Requested")}</th>
+                        <th className="px-3 py-2 font-semibold" title={t("Routing rule that selected the model")}>{t("Rule")}</th>
+                        <th className="px-3 py-2 font-semibold" title={t("Model actually used for the request")}>{t("Final Model")}</th>
                         <th className="px-3 py-2 text-right font-semibold">{t("Tools")}</th>
                         <th className="px-3 py-2 text-right font-semibold">{t("Tokens")}</th>
                         <th className="px-3 py-2 text-right font-semibold">{t("Duration")}</th>
@@ -3607,8 +3646,9 @@ function AgentSessionDetailCard({
                         <tr className={agentListRowClassName()} key={request.id}>
                           <td className="px-3 py-2 font-mono">{formatLogDateTime(request.createdAt)}</td>
                           <td className="px-3 py-2 font-semibold">{request.statusCode || "-"}</td>
-                          <td className="max-w-[140px] px-3 py-2" title={formatRouteReason(request.routeReason)}>{formatRouteReason(request.routeReason)}</td>
-                          <td className="max-w-[300px] px-3 py-2" title={`${request.provider}/${request.model}`}>{request.provider}/{request.model}</td>
+                          <td className="max-w-[220px] px-3 py-2 font-mono" title={request.requestedModel || t("Unknown")}>{request.requestedModel || "-"}</td>
+                          <td className="max-w-[160px] px-3 py-2" title={request.routedModel ? `${formatRouteReason(request.routeReason)} -> ${request.routedModel}` : formatRouteReason(request.routeReason)}>{formatRouteReason(request.routeReason)}</td>
+                          <td className="max-w-[300px] px-3 py-2 font-mono" title={`${request.provider}/${request.model}`}>{request.provider}/{request.model}</td>
                           <td className="px-3 py-2 text-right" title={request.tools.join(", ")}>{formatCompactNumber(request.toolCallCount)}</td>
                           <td className="px-3 py-2 text-right">{formatCompactNumber(request.totalTokens)}</td>
                           <td className="px-3 py-2 text-right">{formatDuration(request.durationMs)}</td>
@@ -3622,6 +3662,39 @@ function AgentSessionDetailCard({
           </div>
         )}
         </DialogBody>
+        <DialogFooter className="flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-start">
+          {onViewInLog && traceSessionId ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <Button
+                aria-label={t("View in Log")}
+                onClick={() => onViewInLog(traceSessionId)}
+                size="sm"
+                title={t("Open the request log filtered to this trace")}
+                type="button"
+                variant="outline"
+              >
+                <ScrollText className="h-3.5 w-3.5" />
+                {t("View in Log")}
+              </Button>
+              <span className="min-w-0 text-[11px] text-muted-foreground">{t("Open the request log filtered to this trace")}</span>
+            </div>
+          ) : null}
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              aria-label={t("Download observability")}
+              disabled={!detail || exporting}
+              onClick={() => void exportSession()}
+              size="sm"
+              title={t("Save this trace's observability analysis as JSON")}
+              type="button"
+              variant="outline"
+            >
+              <Download className={cn("h-3.5 w-3.5", exporting && "animate-pulse")} />
+              {t("Download observability")}
+            </Button>
+            <span className="min-w-0 text-[11px] text-muted-foreground">{t("Save this trace's observability analysis as JSON")}</span>
+          </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

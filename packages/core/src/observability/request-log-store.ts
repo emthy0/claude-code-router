@@ -150,6 +150,8 @@ type AnalyzedAgentRequest = AgentAnalysisRequestRow & {
 
 type AgentLogDetails = {
   agent: AgentKind;
+  requestedModel?: string;
+  routedModel?: string;
   routeReason?: string;
   sessionId: string;
   subagentModel?: string;
@@ -1013,6 +1015,8 @@ function toAnalyzedAgentRequest(entry: StoredRequestLogEntry): AnalyzedAgentRequ
     path: entry.path,
     provider: entry.provider,
     requestId: entry.requestId,
+    requestedModel: details.requestedModel,
+    routedModel: details.routedModel,
     routeReason: details.routeReason,
     sessionId: details.sessionId,
     startedAtMs,
@@ -1048,6 +1052,8 @@ function extractAgentLogDetails(entry: StoredRequestLogEntry): AgentLogDetails {
 
   return {
     agent,
+    requestedModel: readHeaderValue(entry.requestHeaders, "x-ccr-requested-model"),
+    routedModel,
     routeReason,
     sessionId: extractAgentSessionId(entry, requestPayloads, agent),
     subagentModel,

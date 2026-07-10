@@ -2358,6 +2358,11 @@ function App() {
     }));
   }
 
+  function viewTraceInLog(sessionId: string) {
+    setRequestLogFilter((current) => ({ page: 1, pageSize: current.pageSize, query: sessionId, status: "all" }));
+    setActiveView("logs");
+  }
+
   function updateAgentAnalysisAgent(value: AgentFilterValue) {
     setAgentAnalysisAgent(value);
     setAgentAnalysisSession(undefined);
@@ -2876,6 +2881,7 @@ function App() {
                   error: agentAnalysisError,
                   loading: agentAnalysisLoading,
                   notify: showToast,
+                  onViewInLog: viewTraceInLog,
                   range: agentAnalysisRange,
                   refreshAnalysis: () => void refreshAgentAnalysis(),
                   selectedSession: agentAnalysisSession,

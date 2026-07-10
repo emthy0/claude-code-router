@@ -376,10 +376,23 @@ export function LogsView({
 
   const selectedCount = selectedIds.size;
   const allVisibleSelected = page.items.length > 0 && page.items.every((item) => selectedIds.has(item.id));
+  const lastSelectedIndexRef = useRef<number | null>(null);
 
-  function toggleRowSelected(id: number) {
+  function toggleRowSelected(id: number, index: number, rangeSelect: boolean) {
     setSelectedIds((current) => {
       const next = new Set(current);
+      // shift/ctrl range-select: add every row between the last anchor and this one.
+      if (rangeSelect && lastSelectedIndexRef.current !== null) {
+        const start = Math.min(lastSelectedIndexRef.current, index);
+        const end = Math.max(lastSelectedIndexRef.current, index);
+        for (let i = start; i <= end; i += 1) {
+          const item = page.items[i];
+          if (item) {
+            next.add(item.id);
+          }
+        }
+        return next;
+      }
       if (next.has(id)) {
         next.delete(id);
       } else {
@@ -387,6 +400,7 @@ export function LogsView({
       }
       return next;
     });
+    lastSelectedIndexRef.current = index;
   }
 
   function toggleAllVisibleSelected() {
@@ -722,7 +736,7 @@ const LogRow = memo(function LogRow({
   logTableGridClass: string;
   logTableGridStyle?: LogTableGridStyle;
   onToggle: (id: number) => void;
-  onToggleSelected: (id: number) => void;
+  onToggleSelected: (id: number, index: number, rangeSelect: boolean) => void;
   selected: boolean;
 }) {
   const t = useAppText();
@@ -743,7 +757,7 @@ const LogRow = memo(function LogRow({
           <Checkbox
             aria-label={t("selected")}
             checked={selected}
-            onCheckedChange={() => onToggleSelected(item.id)}
+            onClick={(event) => onToggleSelected(item.id, index, event.shiftKey)}
           />
         </div>
         <button
